@@ -594,6 +594,9 @@ if __name__ == "__main__":
         '-l', '--sigma_lambda', default=1, type=float,
         help='uncertainty on the mean wavelength [Angstrom]')
     parser.add_argument(
+        '-s', '--intrinsic_dispersion', default=0.1, type=float,
+        help='Intrinsic dispersion of the SNe Ia absolute magnitude [mag]')
+    parser.add_argument(
         '-f', '--fixed_pars', nargs='+', default='',
         help='Parameters that will be fixed')
 
@@ -602,7 +605,7 @@ if __name__ == "__main__":
     boss = priors.BOSS
     sdssr = priors.SDSSR
     data_ok = get_sne_measurments(args.datafile)
-    MODEL = Model(data_ok, list(args.fixed_pars))
+    MODEL = Model(data_ok, list(args.fixed_pars), intrinsic_dispersion=args.intrinsic_dispersion)
 
     MODEL.construct_jacobian()
     MODEL.add_priors([planck], el=1e-10)
