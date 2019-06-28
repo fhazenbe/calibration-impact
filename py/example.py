@@ -41,7 +41,7 @@ def create_log(survey_type, mjd_min=59884., _duration=None):
     if _duration is None:
         duration = CARDS[survey_type]['duration']
     else:
-        duration = duration
+        duration = _duration
     cadences = CARDS[survey_type]['cadences']
     m5sig = CARDS[survey_type]['m5sig']
     mjd_max = mjd_min + duration

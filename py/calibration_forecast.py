@@ -205,11 +205,11 @@ class Model(object):
         params['w'], params['wa'] = mod.w, mod.wa
         params['H0'], params['Omega_b_h2'] = mod.H0, mod.Omega_b_h2
         params['beta'] = beta
-        zpb = np.zeros(len(data_ok))
+        zpb = np.zeros(len(data))
         for band in 'grizy':
-            zpb[data_ok['band']==band] = params['zp'+band].free
-        flx = -2.5*np.log10(data_ok['A']) - (params['mB'].free[data_ok['#SN']] + mod.mu(data_ok['z']) + zpb + 20 + 2.5*np.log10(1+data_ok['z']) + data_ok['zp'] - 2.5*np.log10(A_hc) + params['c'].free[data_ok['#SN']]*(np.polyval(params['color_law'].free, transfo(data_ok['l_eff']))+params['beta'].free))
-        spectrum_fit = base.linear_fit(np.array(data_ok['l_eff']), np.array(flx))
+            zpb[data['band']==band] = params['zp'+band].free
+        flx = -2.5*np.log10(data['A']) - (params['mB'].free[data['#SN']] + mod.mu(data['z']) + zpb + 20 + 2.5*np.log10(1+data['z']) + data['zp'] - 2.5*np.log10(A_hc) + params['c'].free[data['#SN']]*(np.polyval(params['color_law'].free, transfo(data['l_eff']))+params['beta'].free))
+        spectrum_fit = base.linear_fit(np.array(data['l_eff']), np.array(flx))
         params['theta_salt'] = spectrum_fit
         for par in fixed_pars:
             params.fix(par)
@@ -229,16 +229,17 @@ class Model(object):
     def __call__(self, p):
         zps = np.zeros(len(self.data))
         momo = self.new_cosmo_model(p)
+        data = self.data
         for band in 'grizy':
             zps[self.data['band']==band] = p['zp'+band].free
         
-        # return p['mB'].free[self.data['#SN']] + p['c'].free[self.data['#SN']]*(np.polyval(p['color_law'].free, transfo(self.data['l_eff']))+p['beta'].free) + momo.mu(self.data['z']) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free) + zps + 20 + 2.5*np.log10(1+data_ok['z']) + data_ok['zp'] - 2.5*np.log10(A_hc)
-        return p['mB'].free[self.data['#SN']] + momo.mu(self.data['z']) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free) + zps + 20 + 2.5*np.log10(1+data_ok['z']) + data_ok['zp'] - 2.5*np.log10(A_hc) + p['c'].free[self.data['#SN']]*(np.polyval(p['color_law'].free, transfo(self.data['l_eff']))+p['beta'].free)
+        # return p['mB'].free[self.data['#SN']] + p['c'].free[self.data['#SN']]*(np.polyval(p['color_law'].free, transfo(self.data['l_eff']))+p['beta'].free) + momo.mu(self.data['z']) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free) + zps + 20 + 2.5*np.log10(1+data['z']) + data['zp'] - 2.5*np.log10(A_hc)
+        return p['mB'].free[self.data['#SN']] + momo.mu(self.data['z']) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free) + zps + 20 + 2.5*np.log10(1+data['z']) + data['zp'] - 2.5*np.log10(A_hc) + p['c'].free[self.data['#SN']]*(np.polyval(p['color_law'].free, transfo(self.data['l_eff']))+p['beta'].free)
     
     def spec(self, p):
         zps = np.zeros(len(self.data))
         momo = self.new_cosmo_model(p)
-        return -2.5*np.log10(data_ok['A']) - self(p) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free)
+        return -2.5*np.log10(data['A']) - self(p) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free)
 
     def update_lines_optimized(self, lines, cols, dat, jac=True):
         idx0 = dat != 0
@@ -478,6 +479,7 @@ class Model(object):
         else:
             C_dzp = np.zeros((10, 10))
             for i in range(5): C_dzp[i, i] = sigma_zp**2
+            # C_dzp[0, 0] = 1e-16 # NEED TO FIX AT LEAST 1 PARAM?
             A = np.vstack((np.diag(self.der_dl), np.identity(5)))
             C_dl = sigma_dl**2 * np.identity(5)
             C = C_dzp + np.dot(np.dot(A, C_dl), A.T)
