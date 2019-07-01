@@ -157,6 +157,7 @@ class Model(object):
     def __init__(self, d, fixed_pars, cosmo=cosmo.Cosmow0wa(), n_spline=30, intrinsic_dispersion=0.08):
         self.int_disp = intrinsic_dispersion
         self.data = d
+        self.bands = np.unique(self.data['band'])
         self.n_sn = len(np.unique(d['#SN']))
         self.model_cosmo = cosmo
         self.params, self.spline_base = self.init_params(fixed_pars, n_spline)
@@ -171,7 +172,10 @@ class Model(object):
         self.impacted = False
         self.lines, self.cols, self.J_dat = np.zeros(0), np.zeros(0), np.zeros(0)
         self.pedestal = color_disp_func(d['l_eff'])
-        self.der_dl = get_standard_wavelength_derivatives()
+        try:
+            self.der_dl = get_standard_wavelength_derivatives(bands=[b.split('::')[-1] for b in self.bands])
+        except:
+            self.der_dl = np.zeros(len(self.bands))
         #self.pedestal = 0.02
 
     def init_params(self, fixed_pars, n_spline):
@@ -180,7 +184,7 @@ class Model(object):
         n = n_spline
         leff = np.array(data['l_eff'])
         n_SN = self.n_sn
-        par_list = [('color_law', len(color_law_params)), 'Omega_m', 'Omega_k', 'w', 'wa', 'H0', 'Omega_b_h2', 'beta', 'zpg', 'zpr', 'zpi', 'zpz', 'zpy', ('theta_salt', n+1),  ('mB', n_SN), ('c', n_SN), 'dlg', 'dlr', 'dli', 'dlz', 'dly']
+        par_list = [('color_law', len(color_law_params)), 'Omega_m', 'Omega_k', 'w', 'wa', 'H0', 'Omega_b_h2', 'beta', ('theta_salt', n+1),  ('mB', n_SN), ('c', n_SN)] + ['zp'+band for band in self.bands] + ['dl'+band for band in self.bands]
         lambda_grid = np.linspace(np.min(leff)-10, np.max(leff)+10, n)
         base = bspline.BSpline(lambda_grid, order=3)
         params = FitParameters(par_list)
@@ -206,7 +210,7 @@ class Model(object):
         params['H0'], params['Omega_b_h2'] = mod.H0, mod.Omega_b_h2
         params['beta'] = beta
         zpb = np.zeros(len(data))
-        for band in 'grizy':
+        for band in self.bands:
             zpb[data['band']==band] = params['zp'+band].free
         flx = -2.5*np.log10(data['A']) - (params['mB'].free[data['#SN']] + mod.mu(data['z']) + zpb + 20 + 2.5*np.log10(1+data['z']) + data['zp'] - 2.5*np.log10(A_hc) + params['c'].free[data['#SN']]*(np.polyval(params['color_law'].free, transfo(data['l_eff']))+params['beta'].free))
         spectrum_fit = base.linear_fit(np.array(data['l_eff']), np.array(flx))
@@ -230,7 +234,7 @@ class Model(object):
         zps = np.zeros(len(self.data))
         momo = self.new_cosmo_model(p)
         data = self.data
-        for band in 'grizy':
+        for band in self.bands:
             zps[self.data['band']==band] = p['zp'+band].free
         
         # return p['mB'].free[self.data['#SN']] + p['c'].free[self.data['#SN']]*(np.polyval(p['color_law'].free, transfo(self.data['l_eff']))+p['beta'].free) + momo.mu(self.data['z']) + np.dot(self.spline_base.eval(np.array(self.data['l_eff'])).toarray(), p['theta_salt'].free) + zps + 20 + 2.5*np.log10(1+data['z']) + data['zp'] - 2.5*np.log10(A_hc)
@@ -336,7 +340,7 @@ class Model(object):
             self.update_lines_optimized(np.arange(len(d)), p['c'].indexof(d['#SN']), beta + np.polyval(color_law_params, transfo(d['l_eff'])))
         if 'mB' not in self.fixed_pars:
             self.update_lines_optimized(np.arange(len(d)), p['mB'].indexof(d['#SN']), np.ones(len(d)))
-        for band in 'grizy':
+        for band in self.bands:
             idxband = d['band']==band
             if 'zp'+band not in self.fixed_pars:
                 self.update_lines(all_lines[idxband], p['zp'+band].indexof(), 1.)
@@ -465,7 +469,7 @@ class Model(object):
             #self.update_model(self.free_cosmo_params, pp.jac(self.model_cosmo, self.cosmo_free_idx), pp.C)
             self.update_cov(pp.C, w=pp.W)
 
-    def calib_impact(self, sigma_zp, sigma_dl):
+    def calib_impact(self, sigma_zp, sigma_dl, covfile=None):
         if self.impacted:
             self.reset()
         else:
@@ -475,19 +479,22 @@ class Model(object):
         ### delta-zp priors
         print 'Adding delta-zp priors'
         if 'dlr' in self.fixed_pars:
-            self.update_model(['zp'+band for band in 'grizy'], np.identity(5), sigma_zp**2*np.identity(5))
+            self.update_model(['zp'+band for band in self.bands], np.identity(len(self.bands)), sigma_zp**2*np.identity(len(self.bands)))
         else:
-            C_dzp = np.zeros((10, 10))
-            for i in range(5): C_dzp[i, i] = sigma_zp**2
+            C_dzp = np.zeros((2*len(self.bands), 2*len(self.bands)))
+            for i in range(len(self.bands)): C_dzp[i, i] = sigma_zp**2
             # C_dzp[0, 0] = 1e-16 # NEED TO FIX AT LEAST 1 PARAM?
-            A = np.vstack((np.diag(self.der_dl), np.identity(5)))
-            C_dl = sigma_dl**2 * np.identity(5)
-            C = C_dzp + np.dot(np.dot(A, C_dl), A.T)
-            J_calib = np.identity(10)
-            self.update_model(['zp'+band for band in 'grizy']+['dl'+band for band in 'grizy'], J_calib, C)
+            A = np.vstack((np.diag(self.der_dl), np.identity(len(self.bands))))
+            C_dl = sigma_dl**2 * np.identity(len(self.bands))
+            if covfile is None:
+                C = C_dzp + np.dot(np.dot(A, C_dl), A.T)
+            else:
+                C = pyfits.get_data(covfile)
+            J_calib = np.identity(2*len(self.bands))
+            self.update_model(['zp'+band for band in self.bands]+['dl'+band for band in self.bands], J_calib, C)
         
         self.impacted = True
-        if 'dlr' not in self.fixed_pars:
+        if 'dl'+self.bands[0] not in self.fixed_pars:
             return C
 
     def generate_J(self):
@@ -569,8 +576,8 @@ def block_cov_matrix(W, s):
     w = A - B * f(C)
     return np.linalg.inv(w.todense())
 
-def eval_FoM(DataModel, sigma_zp, sigma_dl):
-    C_calib = DataModel.calib_impact(sigma_zp, sigma_dl)
+def eval_FoM(DataModel, sigma_zp, sigma_dl, cov_file=None):
+    C_calib = DataModel.calib_impact(sigma_zp, sigma_dl, cov_file)
     J, C = DataModel.generate_J(), DataModel.generate_C()
     W = DataModel.W
     Fisher = J.T*W*J
@@ -601,6 +608,9 @@ if __name__ == "__main__":
     parser.add_argument(
         '-f', '--fixed_pars', nargs='+', default='',
         help='Parameters that will be fixed')
+    parser.add_argument(
+        '-c', '--cov_mat', default='',
+        help='Covariance matrix for all bands of the combined survey. The columns and the lines have to be ordered alphabetically by band')
 
     args = parser.parse_args()
     planck = priors.PLANCK
@@ -611,12 +621,15 @@ if __name__ == "__main__":
 
     MODEL.construct_jacobian()
     MODEL.add_priors([planck], el=1e-10)
-
+    if args.cov_mat == '':
+        covmat = None
+    else:
+        covmat = args.cov_mat
     # zp_uncertainties = np.logspace(-5, 0, 20)
     # l_uncertainties = np.logspace(-2, 3, 20)
     # zt, lt = np.meshgrid(zp_uncertainties, l_uncertainties)
     # zt, lt = zt.flatten(), lt.flatten()
-    FoM = eval_FoM(MODEL, args.sigma_zeropoint, args.sigma_lambda)
+    FoM = eval_FoM(MODEL, args.sigma_zeropoint, args.sigma_lambda, covmat)
     print 'Calculated FoM : %.1f' % FoM
 
     """
